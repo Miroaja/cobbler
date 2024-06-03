@@ -21,10 +21,9 @@ inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
   std::vector<std::string> command = {};
   command.push_back("ld");
 #if !defined(WIN32)
-  // FIX: These need to be accessed in a more standard way
-  // Current commands are taken from ""clang++ -v"" of the test file. Most of it
-  // is thus pretty standard, but especially the search paths could be
-  // troublesome.
+  // turns out there is no good way to do this simply, best that can be done is
+  // to run c++ -v on a file and flatten the args for each system (currently
+  // this works pretty much perfectly for clang on linux)
   command.push_back("-pie");
   command.push_back("--hash-style=gnu");
   command.push_back("--build-id");
@@ -35,16 +34,12 @@ inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
   command.push_back("/lib64/ld-linux-x86-64.so.2");
   command.push_back("-o");
   command.push_back("a.out");
-  command.push_back("/usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/14.1.1/../../../"
-                    "../lib64/Scrt1.o");
-  command.push_back("/usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/14.1.1/../../../"
-                    "../lib64/crti.o");
-  command.push_back(
-      "/usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/14.1.1/crtbeginS.o");
-  command.push_back("-L/usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/14.1.1");
-  command.push_back(
-      "-L/usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/14.1.1/../../../../lib64");
-  command.push_back("-L/lib/../lib64 -L/usr/lib/../lib64");
+  command.push_back("/usr/lib64/Scrt1.o");
+  command.push_back("/usr/lib64/crti.o");
+  command.push_back("/usr/lib64/gcc/x86_64-pc-linux-gnu/14.1.1/crtbeginS.o");
+  command.push_back("-L/usr/lib64/gcc/x86_64-pc-linux-gnu/14.1.1");
+  command.push_back("-L/usr/lib64");
+  command.push_back("-L/lib64 -L/usr/lib64");
   command.push_back("-L/lib");
   command.push_back("-L/usr/lib");
   command.push_back("-lstdc++");
@@ -54,10 +49,8 @@ inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
   command.push_back("-lc");
   command.push_back("-lgcc_s");
   command.push_back("-lgcc");
-  command.push_back(
-      "/usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/14.1.1/crtendS.o");
-  command.push_back("/usr/bin/../lib64/gcc/x86_64-pc-linux-gnu/14.1.1/../../../"
-                    "../lib64/crtn.o");
+  command.push_back("/usr/lib64/gcc/x86_64-pc-linux-gnu/14.1.1/crtendS.o");
+  command.push_back("/usr/lib64/crtn.o");
 #else // I have no idea how windows does this shit
   // TODO: Implement!
 #endif
