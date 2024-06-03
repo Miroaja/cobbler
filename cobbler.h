@@ -6,6 +6,7 @@
 #include <iostream>
 #include <optional>
 #include <sstream>
+#include <string.h>
 #include <string>
 #include <sys/wait.h>
 #include <thread>
@@ -27,13 +28,6 @@
 #endif
 
 namespace cbl {
-// TODO: write "expected" type for handling errors as values (down with
-// exceptions!)
-// TODO: add win32 support
-// TODO: add ulity library
-// // should include: auto re-building, basic c++ building, usual things like
-// // making directories and installation
-
 namespace __internal {
 template <class... S>
 inline std::string concatenateVariadic(S const &...strings) {
@@ -58,8 +52,12 @@ toLocalArglist(const std::vector<std::string> &args) {
   result.push_back(nullptr);
   return result;
 }
-
 } // namespace __internal
+
+template <typename T> class expected {
+  // TODO: implement
+};
+
 enum class io : uint8_t { sync = 0, async };
 struct Pipe {
   inline Pipe() { pipe(_fds); }
@@ -144,7 +142,8 @@ private:
       if (c.inPipe) {
         if (dup2(c.inPipe.value()._fds[0], STDIN_FILENO) == -1) {
           auto errorval = errno;
-          COBBLER_ERROR("Could not link inPipe to stdin: %i", errorval);
+          COBBLER_ERROR("Could not link inPipe to stdin: %s",
+                        strerror(errorval));
           abort();
         }
         c.inPipe.value()._close();
@@ -152,7 +151,8 @@ private:
       if (c.outPipe) {
         if (dup2(c.outPipe.value()._fds[1], STDOUT_FILENO) == -1) {
           auto errorval = errno;
-          COBBLER_ERROR("Could not link outPipe to stdout: %i", errorval);
+          COBBLER_ERROR("Could not link outPipe to stdout: %s",
+                        strerror(errorval));
           abort();
         }
 
@@ -163,7 +163,7 @@ private:
       std::filesystem::path p = c.call[0];
       execvp(p.filename().c_str(), const_cast<char *const *>(v.data()));
       auto errorval = errno;
-      COBBLER_ERROR("Excec encountered an error: %i", errorval);
+      COBBLER_ERROR("Excec encountered an error: %s", strerror(errorval));
       exit(EXIT_FAILURE);
     } else { /* PARENT */
 
@@ -204,7 +204,8 @@ private:
         if (c.outPipe) {
           if (close(c.outPipe.value()._fds[1]) == -1) {
             auto errorval = errno;
-            COBBLER_ERROR("Could not close write of outPipe: %i", errorval);
+            COBBLER_ERROR("Could not close write of outPipe: %s",
+                          strerror(errorval));
             abort();
           }
         }
@@ -222,7 +223,8 @@ private:
           if (c.outPipe) {
             if (close(c.outPipe.value()._fds[1]) == -1) {
               auto errorval = errno;
-              COBBLER_ERROR("Could not close write of outPipe: %i", errorval);
+              COBBLER_ERROR("Could not close write of outPipe: %s",
+                            strerror(errorval));
               abort();
             }
           }
