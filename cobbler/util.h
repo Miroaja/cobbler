@@ -1,53 +1,188 @@
 #pragma once
 #include "../cobbler.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
+#include <tuple>
+#include <uchar.h>
 #include <unistd.h>
+#include <variant>
+#include <vector>
 
 namespace cbl {
 namespace util {
 
 /* TODO: Parsing commandline args
-//
-//  Command line args are either:
-//  A flag
-//  or
-//  A value
-//
-//  Flags are defined by their format:
-//    flags always start with a "-"
-//
-//    flags are can be in long form, e.g.
-//    "--flag-that-exists", and also (not separately)
-//     a short form e.g. "-f"
-//
-//    flags always take a boolean reference to fill
-//
-//  Anything that is not a flag is a value:
-//    values are always strings
-//
-//    values may be optional, but must always
-//    follow a flag or exist at the extremes of the args
-//
-//
-//    if a value is attached to a flag, that flag no longer
-//    provides a boolean value to fill. Instead the value
-//    associated with that argument is either filled into
-//    a string reference, or is passed to a functor
-//    void(const std::string&) to be parsed and assigned further
-//
-//    if a value is declared as required and is associated
-//    with a flag, that flag becomes a required feature as well
-//    e.g. the value "mode" attached to flag "-m" is required,
-//    making the flag and the value required in the format:
-//    "-m mode"
-//
-//
-//    usage:
-//
-//     TODO: write this!!!
+
+  Command line args are either:
+  A flag
+  or
+  A value
+
+  Flags are defined by their format:
+    flags always start with a "-"
+
+    flags are can be in long form, e.g.
+    "--flag-that-exists", and also (not separately)
+     a short form e.g. "-f"
+
+    flags always take a boolean reference to fill
+
+  Anything that is not a flag is a value:
+    values are always strings
+
+    values may be optional, but must always
+    follow a flag or exist at the extremes of the args
+
+
+    if a value is attached to a flag, that flag no longer
+    provides a boolean value to fill. Instead the value
+    associated with that argument is either filled into
+    a string reference, or is passed to a functor
+    void(const std::string&) to be parsed and assigned further
+
+    if a value is declared as required and is associated
+    with a flag, that flag becomes a required feature as well
+    e.g. the value "mode" attached to flag "-m" is required,
+    making the flag and the value required in the format:
+    "-m mode"
+
+
+    usage:
+
+     TODO: write this!!!
 */
+
+struct ArgParser {
+  enum class Type : uint8_t {
+    flag = 0,
+    value,
+  };
+  inline void operator()() {
+    for (auto &t : _parserState) {
+      switch (t.type) {
+      case Type::flag: {
+        const char **end = _argv + _argc;
+        int fCount = 0;
+        const char *prev = *_argv;
+        std::for_each(_argv + 1, end, [&prev, this, t, &fCount](const char *v) {
+          bool isInValueField = std::any_of(
+              _parserState.begin(), _parserState.end(),
+              [prev](const _State &t) {
+                return t.type == Type::value &&
+                       (t.longToken == prev ||
+                        (t.shortToken ? t.shortToken.value() == prev : false));
+              });
+
+          if (v == t.longToken && !isInValueField) {
+            fCount++;
+          }
+          if (t.shortToken) {
+            if (v == t.shortToken && !isInValueField) {
+              fCount++;
+            }
+          }
+          prev = v;
+        });
+
+        if (fCount > 1) {
+          _error(t.longToken, "flag present more than once");
+        }
+        *std::get<bool *>(t.filler) = fCount == 1;
+      } break;
+      case Type::value: {
+        const char **end = _argv + _argc;
+        int fCount = 0;
+        std::string value = "";
+
+        if (*(_argv + _argc - 1) == t.longToken) {
+          _error(t.longToken, "value flag was at the end of command");
+        } else if (t.shortToken) {
+          if (*(_argv + _argc - 1) == t.shortToken.value()) {
+            _error(t.shortToken.value(),
+                   "value flag was at the end of command");
+          }
+        }
+
+        for (const char **i = _argv; i != end - 1; i++) {
+          if (*i == t.longToken) {
+            if (fCount++ > 0) {
+              _error(t.longToken, "flag present more than once");
+            }
+            value = *(i + 1);
+          }
+          if (t.shortToken) {
+            if (*i == t.shortToken.value()) {
+              if (fCount++ > 0) {
+                _error(t.shortToken.value(), "flag present more than once");
+              }
+              value = *(i + 1);
+            }
+          }
+        }
+        if (fCount > 0) {
+          if (std::holds_alternative<std::string *>(t.filler)) {
+            *std::get<std::string *>(t.filler) = value;
+          } else {
+            std::get<std::function<void(const std::string &)>>(t.filler)(value);
+          }
+        } else {
+          if (!t.isOptional) {
+            _error(t.longToken, "required value was not present in args");
+          }
+        }
+      } break;
+      default: {
+        // Is not realistically reachable
+      }
+      }
+    }
+  }
+
+  inline ArgParser &flag(bool *value, const std::string &longName,
+                         std::optional<std::string> shortname = {}) {
+    // TODO: implement pushing flags
+    return *this;
+  }
+
+  inline ArgParser &value(std::string *value, const std::string &longName,
+                          std::optional<std::string> shortname = {}) {
+    // TODO: see above
+    return *this;
+  }
+
+  inline ArgParser &value(std::function<void(const std::string &)>,
+                          const std::string &longName,
+                          std::optional<std::string> shortname = {}) {
+    // TODO: see above
+    return *this;
+  }
+
+private:
+  void _error(const std::string &token, const std::string &reason) {
+    // TODO: Print usage!
+    exit(EXIT_FAILURE);
+  }
+
+  struct _State {
+    ArgParser::Type type;
+
+    bool isOptional;
+
+    std::string longToken;
+    std::optional<std::string> shortToken;
+
+    std::variant<bool *, std::string *,
+                 std::function<void(const std::string &)>>
+        filler;
+  };
+
+  std::vector<_State> _parserState;
+  int _argc;
+  const char **_argv;
+};
 
 template <io TYPE = io::async, typename... S>
 inline std::filesystem::path
