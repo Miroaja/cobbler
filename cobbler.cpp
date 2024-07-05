@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <unistd.h>
 
-int main(int argc, char *argv[]) {
+int main(int argc, const char **argv) {
   cbl::Cobbler c;
 
   if (cbl::util::isNewerThan("cobbler.cpp", "install")) {

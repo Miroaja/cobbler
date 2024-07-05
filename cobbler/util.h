@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <ios>
 #include <tuple>
 #include <uchar.h>
 #include <unistd.h>
@@ -50,9 +51,25 @@ namespace util {
     "-m mode"
 
 
-    usage:
+    usage text:
 
-     TODO: write this!!!
+    printing a usage text goes as follows:
+
+    usage:
+      <<program name>> [options/parameters]
+  value]...
+
+    required parameters:
+      <<longName>> (<<short name>>) [value] : <<description>>
+      ...
+
+    options:
+      <<long name>> (<<short name>>) = <<default value>> : <<description>>
+      ...
+
+    optional parameters:
+      <<long name>> (<<short name>>) = <<default value>> : <<description>>
+      ...
 */
 
 struct ArgParser {
@@ -60,77 +77,112 @@ struct ArgParser {
     flag = 0,
     value,
   };
+  inline ArgParser(int argc, const char **argv, const std::string &name)
+      : _argc(argc), _argv(argv), _name(name) {
+    _State s;
+    s.type = Type::flag;
+    s.longToken = "--help";
+    s.shortToken = {};
+    s.defaultValue = "";
+    s.description = "print this text";
+    s.filler = [this]() {
+      _usage();
+      exit(EXIT_SUCCESS);
+    };
+    _parserState.push_back(s);
+  }
+
   inline void operator()() {
-    for (auto &t : _parserState) {
-      switch (t.type) {
+    for (auto &currentState : _parserState) {
+      switch (currentState.type) {
       case Type::flag: {
         const char **end = _argv + _argc;
         int fCount = 0;
         const char *prev = *_argv;
-        std::for_each(_argv + 1, end, [&prev, this, t, &fCount](const char *v) {
-          bool isInValueField = std::any_of(
-              _parserState.begin(), _parserState.end(),
-              [prev](const _State &t) {
-                return t.type == Type::value &&
-                       (t.longToken == prev ||
-                        (t.shortToken ? t.shortToken.value() == prev : false));
-              });
+        std::for_each(_argv + 1, end,
+                      [&prev, this, currentState, &fCount](const char *v) {
+                        bool isInValueField = std::any_of(
+                            _parserState.begin(), _parserState.end(),
+                            [prev](const _State &t) {
+                              return t.type == Type::value &&
+                                     (t.longToken == prev ||
+                                      (t.shortToken
+                                           ? t.shortToken.value() == prev
+                                           : false));
+                            });
 
-          if (v == t.longToken && !isInValueField) {
-            fCount++;
-          }
-          if (t.shortToken) {
-            if (v == t.shortToken && !isInValueField) {
-              fCount++;
-            }
-          }
-          prev = v;
-        });
+                        if (v == currentState.longToken && !isInValueField) {
+                          fCount++;
+                        }
+                        if (currentState.shortToken) {
+                          if (v == currentState.shortToken && !isInValueField) {
+                            fCount++;
+                          }
+                        }
+                        prev = v;
+                      });
 
         if (fCount > 1) {
-          _error(t.longToken, "flag present more than once");
+          _error(currentState.longToken, "option present more than once");
         }
-        *std::get<bool *>(t.filler) = fCount == 1;
+        if (std::holds_alternative<bool *>(currentState.filler)) {
+          *std::get<bool *>(currentState.filler) = fCount == 1;
+        } else if (fCount == 1) {
+          std::get<std::function<void(void)>>(currentState.filler)();
+        }
+
       } break;
       case Type::value: {
         const char **end = _argv + _argc;
         int fCount = 0;
         std::string value = "";
 
-        if (*(_argv + _argc - 1) == t.longToken) {
-          _error(t.longToken, "value flag was at the end of command");
-        } else if (t.shortToken) {
-          if (*(_argv + _argc - 1) == t.shortToken.value()) {
-            _error(t.shortToken.value(),
-                   "value flag was at the end of command");
+        if (*(_argv + _argc - 1) == currentState.longToken) {
+          _error(currentState.longToken,
+                 "parameter present without without value");
+        } else if (currentState.shortToken) {
+          if (*(_argv + _argc - 1) == currentState.shortToken.value()) {
+            _error(currentState.shortToken.value(),
+                   "parameter present without without value");
           }
         }
 
         for (const char **i = _argv; i != end - 1; i++) {
-          if (*i == t.longToken) {
+          if (*i == currentState.longToken) {
             if (fCount++ > 0) {
-              _error(t.longToken, "flag present more than once");
+              _error(currentState.longToken, "option present more than once");
             }
             value = *(i + 1);
           }
-          if (t.shortToken) {
-            if (*i == t.shortToken.value()) {
+          if (currentState.shortToken) {
+            if (*i == currentState.shortToken.value()) {
               if (fCount++ > 0) {
-                _error(t.shortToken.value(), "flag present more than once");
+                _error(currentState.shortToken.value(),
+                       "option present more than once");
               }
               value = *(i + 1);
             }
           }
         }
         if (fCount > 0) {
-          if (std::holds_alternative<std::string *>(t.filler)) {
-            *std::get<std::string *>(t.filler) = value;
+          if (std::holds_alternative<std::string *>(currentState.filler)) {
+            *std::get<std::string *>(currentState.filler) = value;
           } else {
-            std::get<std::function<void(const std::string &)>>(t.filler)(value);
+            std::get<std::function<void(const std::string &)>>(
+                currentState.filler)(value);
           }
         } else {
-          if (!t.isOptional) {
-            _error(t.longToken, "required value was not present in args");
+          if (!currentState.isOptional) {
+            _error(currentState.longToken,
+                   "required parameter was not present in args");
+          } else {
+            if (std::holds_alternative<std::string *>(currentState.filler)) {
+              *std::get<std::string *>(currentState.filler) =
+                  currentState.defaultValue;
+            } else {
+              std::get<std::function<void(const std::string &)>>(
+                  currentState.filler)(currentState.defaultValue);
+            }
           }
         }
       } break;
@@ -142,46 +194,252 @@ struct ArgParser {
   }
 
   inline ArgParser &flag(bool *value, const std::string &longName,
-                         std::optional<std::string> shortname = {}) {
-    // TODO: implement pushing flags
+                         std::optional<std::string> shortname = {},
+                         std::optional<std::string> description = {}) {
+    if (longName == "--help") {
+      COBBLER_ERROR("The flag \"--help\" is reserved.");
+    }
+
+    _State s;
+    s.type = Type::flag;
+    s.longToken = "--" + longName;
+    if (shortname) {
+      shortname = "-" + shortname.value();
+    }
+    s.shortToken = shortname;
+    s.defaultValue = "";
+    s.description = description;
+    s.filler = value;
+    s.isOptional = true;
+    _parserState.push_back(s);
+    return *this;
+  }
+
+  inline ArgParser &flag(std::function<void(void)> filler,
+                         const std::string &longName,
+                         std::optional<std::string> shortname = {},
+                         std::optional<std::string> description = {}) {
+    if (longName == "--help") {
+      COBBLER_ERROR("The flag \"--help\" is reserved.");
+    }
+
+    _State s;
+    s.type = Type::flag;
+    s.longToken = "--" + longName;
+    if (shortname) {
+      shortname = "-" + shortname.value();
+    }
+    s.shortToken = shortname;
+    s.defaultValue = "";
+    s.description = description;
+    s.filler = filler;
+    s.isOptional = true;
+    _parserState.push_back(s);
     return *this;
   }
 
   inline ArgParser &value(std::string *value, const std::string &longName,
-                          std::optional<std::string> shortname = {}) {
-    // TODO: see above
+                          std::optional<std::string> shortname = {},
+                          std::optional<std::string> description = {}) {
+    if (longName == "--help") {
+      COBBLER_ERROR("The flag \"--help\" is reserved.");
+    }
+
+    _State s;
+    s.type = Type::value;
+    s.longToken = "--" + longName;
+    if (shortname) {
+      shortname = "-" + shortname.value();
+    }
+    s.shortToken = shortname;
+    s.description = description;
+    s.defaultValue = "";
+    s.filler = value;
+    s.isOptional = false;
+    _parserState.push_back(s);
     return *this;
   }
 
-  inline ArgParser &value(std::function<void(const std::string &)>,
+  inline ArgParser &value(std::function<void(const std::string &)> filler,
                           const std::string &longName,
-                          std::optional<std::string> shortname = {}) {
-    // TODO: see above
+                          std::optional<std::string> shortname = {},
+                          std::optional<std::string> description = {}) {
+    if (longName == "--help") {
+      COBBLER_ERROR("The flag \"--help\" is reserved.");
+    }
+
+    _State s;
+    s.type = Type::value;
+    s.longToken = "--" + longName;
+    if (shortname) {
+      shortname = "-" + shortname.value();
+    }
+    s.shortToken = shortname;
+    s.description = description;
+    s.defaultValue = "";
+    s.filler = filler;
+    s.isOptional = false;
+    _parserState.push_back(s);
+    return *this;
+  }
+
+  inline ArgParser &opt_value(std::string *value,
+                              const std::string &defaultValue,
+                              const std::string &longName,
+                              std::optional<std::string> shortname = {},
+                              std::optional<std::string> description = {}) {
+    if (longName == "--help") {
+      COBBLER_ERROR("The flag \"--help\" is reserved.");
+    }
+
+    _State s;
+    s.type = Type::value;
+    s.longToken = "--" + longName;
+    if (shortname) {
+      shortname = "-" + shortname.value();
+    }
+    s.shortToken = shortname;
+    s.description = description;
+    s.defaultValue = defaultValue;
+    s.filler = value;
+    s.isOptional = true;
+    _parserState.push_back(s);
+    return *this;
+  }
+
+  inline ArgParser &opt_value(std::function<void(const std::string &)> filler,
+                              const std::string &defaultValue,
+                              const std::string &longName,
+                              std::optional<std::string> shortname = {},
+                              std::optional<std::string> description = {}) {
+    if (longName == "--help") {
+      COBBLER_ERROR("The flag \"--help\" is reserved.");
+    }
+
+    _State s;
+    s.type = Type::value;
+    s.longToken = "--" + longName;
+    if (shortname) {
+      shortname = "-" + shortname.value();
+    }
+    s.shortToken = shortname;
+    s.description = description;
+    s.defaultValue = defaultValue;
+    s.filler = filler;
+    s.isOptional = true;
+    _parserState.push_back(s);
     return *this;
   }
 
 private:
   void _error(const std::string &token, const std::string &reason) {
-    // TODO: Print usage!
+    COBBLER_ERROR("Incorrect argument \"%s\" : %s", token.c_str(),
+                  reason.c_str());
     exit(EXIT_FAILURE);
+  }
+
+  void _usage() {
+    bool containsFlags = std::any_of(
+        _parserState.begin(), _parserState.end(), [](const _State &s) {
+          return s.type == Type::flag && s.longToken != "--help";
+        });
+    bool containsValues =
+        std::any_of(_parserState.begin(), _parserState.end(),
+                    [](const _State &s) { return s.type == Type::value; });
+
+    std::cout << "usage:\n  " << _name;
+    switch ((containsFlags ? 0b01 : 0b00) | (containsValues ? 0b10 : 0b00)) {
+    case 0b01: {
+      std::cout << " [options]\n\n";
+    } break;
+    case 0b10: {
+      std::cout << " [parameters]\n\n";
+    } break;
+    case 0b11: {
+      std::cout << " [options/parameters]\n\n";
+    } break;
+    default: {
+      exit(EXIT_SUCCESS);
+    } break;
+    }
+
+    if (std::any_of(_parserState.begin(), _parserState.end(),
+                    [](const _State &s) {
+                      return s.type == Type::value && !s.isOptional;
+                    })) {
+      std::cout << "required parameters:\n";
+      for (const _State &s : _parserState) {
+        if (s.type == Type::value && !s.isOptional) {
+          std::cout << "  " << s.longToken;
+          if (s.shortToken) {
+            std::cout << " (" << s.shortToken.value() << ")";
+          }
+          std::cout << " [value]";
+          if (s.description) {
+            std::cout << " : " << s.description.value();
+          }
+          std::cout << "\n";
+        }
+      }
+    }
+
+    if (containsFlags) {
+      std::cout << "\noptions:\n";
+      for (const _State &s : _parserState) {
+        if (s.type == Type::flag) {
+          std::cout << "  " << s.longToken;
+          if (s.shortToken) {
+            std::cout << " (" << s.shortToken.value() << ")";
+          }
+          if (s.description) {
+            std::cout << " : " << s.description.value();
+          }
+          std::cout << "\n";
+        }
+      }
+    }
+    if (std::any_of(_parserState.begin(), _parserState.end(),
+                    [](const _State &s) {
+                      return s.type == Type::value && s.isOptional;
+                    })) {
+      std::cout << "\noptional parameters:\n";
+      for (const _State &s : _parserState) {
+        if (s.type == Type::value && !s.isOptional) {
+          std::cout << "  " << s.longToken;
+          if (s.shortToken) {
+            std::cout << " (" << s.shortToken.value() << ")";
+          }
+          std::cout << " = " << s.defaultValue;
+          if (s.description) {
+            std::cout << " : " << s.description.value();
+          }
+          std::cout << "\n";
+        }
+      }
+    }
+    std::cout.flush();
+    exit(EXIT_SUCCESS);
   }
 
   struct _State {
     ArgParser::Type type;
 
     bool isOptional;
+    std::string defaultValue;
 
     std::string longToken;
     std::optional<std::string> shortToken;
-
+    std::optional<std::string> description;
     std::variant<bool *, std::string *,
-                 std::function<void(const std::string &)>>
+                 std::function<void(const std::string &)>,
+                 std::function<void(void)>>
         filler;
   };
 
   std::vector<_State> _parserState;
   int _argc;
   const char **_argv;
+  std::string _name;
 };
 
 template <io TYPE = io::async, typename... S>
@@ -252,7 +510,7 @@ inline bool isNewerThan(const std::filesystem::path &a,
 
 template <typename... S>
 inline void rebuildAndRun(Cobbler &c, std::vector<std::filesystem::path> units,
-                          std::filesystem::path target, char *const *argv,
+                          std::filesystem::path target, const char **argv,
                           const S &...extraFlags) {
 
   for (auto &unit : units) {
@@ -281,7 +539,9 @@ inline void rebuildAndRun(Cobbler &c, std::vector<std::filesystem::path> units,
   }
   c();
   COBBLER_LOG("Restarting program %s", target.c_str());
-  execvp(target.c_str(), argv);
+  // Evil const dropping cast
+  execvp(target.c_str(), (char *const *)argv);
+
   auto errorval = errno;
   COBBLER_ERROR("Excec encountered an error: %s", strerror(errorval));
   exit(EXIT_FAILURE);
