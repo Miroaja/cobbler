@@ -442,7 +442,6 @@ inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
   std::vector<std::string> command = {};
   command.push_back("c++");
 
-  COBBLER_PUSH_INDENT();
   // ld commands are an absolute assfuck to generate manually so we won't :)
 
   for (const auto &c : objects) {
@@ -450,7 +449,6 @@ inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
     command.push_back(c.string());
   }
 
-  COBBLER_POP_INDEND();
   command.push_back("-o");
   command.push_back(target.string());
   auto rrg = __internal::splatVariadicToArgVector(extraFlags...);
@@ -485,22 +483,26 @@ inline void rebuildAndRun(Cobbler &c, std::vector<std::filesystem::path> units,
   COBBLER_LOG("Compiling unit(s)");
 
   COBBLER_PUSH_INDENT();
+  std::vector<std::filesystem::path> objects = {};
   for (const auto &unit : units) {
-    util::compile(c, unit, target.parent_path(), extraFlags...);
+    objects.push_back(
+        util::compile(c, unit, target.parent_path(), extraFlags...));
   }
-  COBBLER_POP_INDEND();
   c();
+  COBBLER_POP_INDENT();
   c.clear();
-  for (auto &unit : units) {
-    unit = target.parent_path() / (unit.stem().string() + ".o");
-  }
-  util::link<io::sync>(c, units, target);
+
+  COBBLER_LOG("Linking object(s)...")
+  COBBLER_PUSH_INDENT();
+  util::link<io::sync>(c, objects, target);
   for (const auto &unit : units) {
     c.cmd({}, {}, "rm", (unit.stem().string() + ".o"));
   }
   c();
-  COBBLER_POP_INDEND();
+  COBBLER_POP_INDENT();
+
   COBBLER_LOG("Restarting program %s", target.c_str());
+  COBBLER_POP_INDENT();
   // Evil const dropping cast
   execvp(target.c_str(), (char *const *)argv);
 

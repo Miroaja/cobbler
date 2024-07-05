@@ -24,6 +24,6 @@ int main(int argc, const char **argv) {
   c.cmd({}, {}, "c++", "-fpreprocessed", "-dD", "-E", "-w", "./cobbler/util.h",
         "-o", "/usr/local/include/cobbler/util.h");
   c();
-  COBBLER_POP_INDEND();
+  COBBLER_POP_INDENT();
   COBBLER_LOG("Done!");
 }

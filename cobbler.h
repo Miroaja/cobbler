@@ -28,7 +28,7 @@ inline std::atomic_int indentLevel;
     std::scoped_lock printLock(cbl::__internal::printMux);                     \
     cbl::__internal::indentLevel++;                                            \
   }
-#define COBBLER_POP_INDEND()                                                   \
+#define COBBLER_POP_INDENT()                                                   \
   {                                                                            \
     std::scoped_lock printLock(cbl::__internal::printMux);                     \
     cbl::__internal::indentLevel--;                                            \
