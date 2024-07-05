@@ -1,5 +1,4 @@
 #pragma once
-#include "../cobbler.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -202,10 +201,7 @@ struct ArgParser {
 
     _State s;
     s.type = Type::flag;
-    s.longToken = "--" + longName;
-    if (shortname) {
-      shortname = "-" + shortname.value();
-    }
+    s.longToken = longName;
     s.shortToken = shortname;
     s.defaultValue = "";
     s.description = description;
@@ -225,10 +221,7 @@ struct ArgParser {
 
     _State s;
     s.type = Type::flag;
-    s.longToken = "--" + longName;
-    if (shortname) {
-      shortname = "-" + shortname.value();
-    }
+    s.longToken = longName;
     s.shortToken = shortname;
     s.defaultValue = "";
     s.description = description;
@@ -247,10 +240,7 @@ struct ArgParser {
 
     _State s;
     s.type = Type::value;
-    s.longToken = "--" + longName;
-    if (shortname) {
-      shortname = "-" + shortname.value();
-    }
+    s.longToken = longName;
     s.shortToken = shortname;
     s.description = description;
     s.defaultValue = "";
@@ -270,10 +260,7 @@ struct ArgParser {
 
     _State s;
     s.type = Type::value;
-    s.longToken = "--" + longName;
-    if (shortname) {
-      shortname = "-" + shortname.value();
-    }
+    s.longToken = longName;
     s.shortToken = shortname;
     s.description = description;
     s.defaultValue = "";
@@ -294,10 +281,7 @@ struct ArgParser {
 
     _State s;
     s.type = Type::value;
-    s.longToken = "--" + longName;
-    if (shortname) {
-      shortname = "-" + shortname.value();
-    }
+    s.longToken = longName;
     s.shortToken = shortname;
     s.description = description;
     s.defaultValue = defaultValue;
@@ -318,10 +302,7 @@ struct ArgParser {
 
     _State s;
     s.type = Type::value;
-    s.longToken = "--" + longName;
-    if (shortname) {
-      shortname = "-" + shortname.value();
-    }
+    s.longToken = longName;
     s.shortToken = shortname;
     s.description = description;
     s.defaultValue = defaultValue;
@@ -384,7 +365,7 @@ private:
     }
 
     if (containsFlags) {
-      std::cout << "\noptions:\n";
+      std::cout << "options:\n";
       for (const _State &s : _parserState) {
         if (s.type == Type::flag) {
           std::cout << "  " << s.longToken;
@@ -402,9 +383,9 @@ private:
                     [](const _State &s) {
                       return s.type == Type::value && s.isOptional;
                     })) {
-      std::cout << "\noptional parameters:\n";
+      std::cout << "optional parameters:\n";
       for (const _State &s : _parserState) {
-        if (s.type == Type::value && !s.isOptional) {
+        if (s.type == Type::value && s.isOptional) {
           std::cout << "  " << s.longToken;
           if (s.shortToken) {
             std::cout << " (" << s.shortToken.value() << ")";
@@ -446,6 +427,8 @@ template <io TYPE = io::async, typename... S>
 inline std::filesystem::path
 compile(Cobbler &c, const std::filesystem::path &unit,
         const std::filesystem::path &targetPath, const S &...extraFlags) {
+
+  COBBLER_LOG("Compiling unit: %s", unit.string().c_str());
   c.cmd<TYPE>({}, {}, "c++", "-c", unit.string(), "-o",
               (targetPath / (unit.stem().string() + ".o")).string(),
               extraFlags...);
@@ -457,44 +440,17 @@ template <io TYPE = io::async, typename... S>
 inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
                  const std::filesystem::path &target, const S &...extraFlags) {
   std::vector<std::string> command = {};
-  command.push_back("ld");
-#if !defined(WIN32)
-  // turns out there is no good way to do this simply, best that can be done is
-  // to run c++ -v on a file and flatten the args for each system (currently
-  // this works pretty much perfectly for clang on linux)
-  command.push_back("-pie");
-  command.push_back("--hash-style=gnu");
-  command.push_back("--build-id");
-  command.push_back("--eh-frame-hdr");
-  command.push_back("-m");
-  command.push_back("elf_x86_64");
-  command.push_back("-dynamic-linker");
-  command.push_back("/lib64/ld-linux-x86-64.so.2");
-  command.push_back("/usr/lib64/Scrt1.o");
-  command.push_back("/usr/lib64/crti.o");
-  command.push_back("/usr/lib64/gcc/x86_64-pc-linux-gnu/14.1.1/crtbeginS.o");
-  command.push_back("-L/usr/lib64/gcc/x86_64-pc-linux-gnu/14.1.1");
-  command.push_back("-L/usr/lib64");
-  command.push_back("-L/lib64 -L/usr/lib64");
-  command.push_back("-L/lib");
-  command.push_back("-L/usr/lib");
-  command.push_back("-lstdc++");
-  command.push_back("-lm");
-  command.push_back("-lgcc_s");
-  command.push_back("-lgcc");
-  command.push_back("-lc");
-  command.push_back("-lgcc_s");
-  command.push_back("-lgcc");
-  command.push_back("/usr/lib64/gcc/x86_64-pc-linux-gnu/14.1.1/crtendS.o");
-  command.push_back("/usr/lib64/crtn.o");
-#else // I have no idea how windows does this shit
-  // TODO: Implement!
-#endif
-  command.push_back("-lc");
+  command.push_back("c++");
+
+  COBBLER_PUSH_INDENT();
+  // ld commands are an absolute assfuck to generate manually so we won't :)
+
   for (const auto &c : objects) {
+    COBBLER_LOG("Linking object: %s", c.string().c_str());
     command.push_back(c.string());
   }
 
+  COBBLER_POP_INDEND();
   command.push_back("-o");
   command.push_back(target.string());
   auto rrg = __internal::splatVariadicToArgVector(extraFlags...);
@@ -524,10 +480,15 @@ inline void rebuildAndRun(Cobbler &c, std::vector<std::filesystem::path> units,
 
   COBBLER_LOG("Rebuilding self...");
   c.clear();
+  COBBLER_PUSH_INDENT();
 
+  COBBLER_LOG("Compiling unit(s)");
+
+  COBBLER_PUSH_INDENT();
   for (const auto &unit : units) {
     util::compile(c, unit, target.parent_path(), extraFlags...);
   }
+  COBBLER_POP_INDEND();
   c();
   c.clear();
   for (auto &unit : units) {
@@ -538,6 +499,7 @@ inline void rebuildAndRun(Cobbler &c, std::vector<std::filesystem::path> units,
     c.cmd({}, {}, "rm", (unit.stem().string() + ".o"));
   }
   c();
+  COBBLER_POP_INDEND();
   COBBLER_LOG("Restarting program %s", target.c_str());
   // Evil const dropping cast
   execvp(target.c_str(), (char *const *)argv);

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string.h>
@@ -14,15 +15,50 @@
 #include <unistd.h>
 #include <vector>
 
-// VERSION : 0.0.1;
+// VERSION : 0.0.4;
+namespace cbl {
+namespace __internal {
+inline std::mutex printMux;
+inline std::atomic_int indentLevel;
+} // namespace __internal
+} // namespace cbl
+
+#define COBBLER_PUSH_INDENT()                                                  \
+  {                                                                            \
+    std::scoped_lock printLock(cbl::__internal::printMux);                     \
+    cbl::__internal::indentLevel++;                                            \
+  }
+#define COBBLER_POP_INDEND()                                                   \
+  {                                                                            \
+    std::scoped_lock printLock(cbl::__internal::printMux);                     \
+    cbl::__internal::indentLevel--;                                            \
+  }
 
 #if !defined(WIN32)
 #define COBBLER_LOG(msg, ...)                                                  \
-  { printf("\033[0;34m[INFO] " msg "\033[0m\n", ##__VA_ARGS__); }
+  {                                                                            \
+    std::scoped_lock printLock(cbl::__internal::printMux);                     \
+    for (int i = 0; i < cbl::__internal::indentLevel; i++) {                   \
+      printf("  ");                                                            \
+    }                                                                          \
+    printf("\033[0;34m[INFO] " msg "\033[0m\n", ##__VA_ARGS__);                \
+  }
 #define COBBLER_WARN(msg, ...)                                                 \
-  { printf("\033[0;33m[WARNING] " msg "\033[0m\n", ##__VA_ARGS__); }
+  {                                                                            \
+    std::scoped_lock printLock(cbl::__internal::printMux);                     \
+    for (int i = 0; i < cbl::__internal::indentLevel; i++) {                   \
+      printf("  ");                                                            \
+    }                                                                          \
+    printf("\033[0;33m[WARNING] " msg "\033[0m\n", ##__VA_ARGS__);             \
+  }
 #define COBBLER_ERROR(msg, ...)                                                \
-  { fprintf(stderr, "\033[0;31m[ERROR] " msg "\033[0m\n", ##__VA_ARGS__); }
+  {                                                                            \
+    std::scoped_lock printLock(cbl::__internal::printMux);                     \
+    for (int i = 0; i < cbl::__internal::indentLevel; i++) {                   \
+      fprintf(stderr, "  ");                                                   \
+    }                                                                          \
+    fprintf(stderr, "\033[0;31m[ERROR] " msg "\033[0m\n", ##__VA_ARGS__);      \
+  }
 #else
 /// TODO: DO WIN32 HERE!!!
 #endif

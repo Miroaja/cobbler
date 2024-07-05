@@ -1,5 +1,5 @@
-#include <cobbler.h>
-#include <cobbler/util.h>
+#include "cobbler.h"
+#include "cobbler/util.h"
 #include <cstdlib>
 #include <filesystem>
 #include <unistd.h>
@@ -17,12 +17,13 @@ int main(int argc, const char **argv) {
   }
 
   COBBLER_LOG("Copying headers!");
-  c.cmd({}, {}, "cp", "-rf",
-        (std::filesystem::current_path() / "cobbler.h").string(),
-        "/usr/local/include/");
-  c.cmd({}, {}, "cp", "-rf",
-        (std::filesystem::current_path() / "cobbler").string(),
-        "/usr/local/include/");
+  COBBLER_PUSH_INDENT();
+  c.cmd({}, {}, "c++", "-fpreprocessed", "-dD", "-E", "-w", "./cobbler.h", "-o",
+        "/usr/local/include/cobbler.h");
+  c.cmd({}, {}, "mkdir", "-p", "/usr/local/include/cobbler/");
+  c.cmd({}, {}, "c++", "-fpreprocessed", "-dD", "-E", "-w", "./cobbler/util.h",
+        "-o", "/usr/local/include/cobbler/util.h");
   c();
+  COBBLER_POP_INDEND();
   COBBLER_LOG("Done!");
 }
