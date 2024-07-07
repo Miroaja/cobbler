@@ -27,7 +27,7 @@ template <typename... S> inline void generateClangFile(const S &...flags) {
   for (const auto &arg : args) {
     clangdFile << arg << ((i++ < args.size() - 1) ? ", " : "");
   }
-  clangdFile << "]\n  Compiler: c++";
+  clangdFile << "]\n  Compiler: clang++";
   clangdFile.close();
 }
 
