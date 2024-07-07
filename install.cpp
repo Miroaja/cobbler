@@ -7,8 +7,8 @@
 int main(int argc, const char **argv) {
   cbl::Cobbler c;
 
-  if (cbl::util::isNewerThan("cobbler.cpp", "install")) {
-    cbl::util::rebuildAndRun(c, {"cobbler.cpp"}, "install", argv);
+  if (cbl::util::isNewerThan("install.cpp", "install")) {
+    cbl::util::rebuildAndRun(c, {"install.cpp"}, "install", argv);
   }
 
   if (geteuid() != 0) {

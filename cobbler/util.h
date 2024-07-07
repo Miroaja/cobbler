@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <ios>
 #include <tuple>
@@ -14,8 +15,38 @@
 namespace cbl {
 namespace util {
 
-/* TODO: Parsing commandline args
+template <typename... S> inline void generateClangFile(const S &...flags) {
+  auto args = __internal::splatVariadicToArgVector(flags...);
+  args.push_back("-c");
 
+  std::ofstream clangdFile("./.clangd");
+
+  clangdFile << "CompileFlags:\n";
+  clangdFile << "  Add: [";
+  int i = 0;
+  for (const auto &arg : args) {
+    clangdFile << arg << ((i++ < args.size() - 1) ? ", " : "");
+  }
+  clangdFile << "]\n  Compiler: c++";
+  clangdFile.close();
+}
+
+inline void generateClangFile(const std::vector<std::string> &flags) {
+  auto args = flags;
+  args.push_back("-c");
+
+  std::ofstream clangdFile("./.clangd");
+
+  clangdFile << "CompileFlags:\n";
+  clangdFile << "  Add: [";
+  int i = 0;
+  for (const auto &arg : args) {
+    clangdFile << arg << ((i++ < args.size() - 1) ? ", " : "");
+  }
+  clangdFile << "]\n  Compiler: c++";
+  clangdFile.close();
+}
+/*
   Command line args are either:
   A flag
   or
@@ -70,7 +101,6 @@ namespace util {
       <<long name>> (<<short name>>) = <<default value>> : <<description>>
       ...
 */
-
 struct ArgParser {
   enum class Type : uint8_t {
     flag = 0,
@@ -436,14 +466,33 @@ compile(Cobbler &c, const std::filesystem::path &unit,
   return (targetPath / unit.stem()).string() + ".o";
 }
 
+template <io TYPE = io::async>
+inline std::filesystem::path
+compile(Cobbler &c, const std::filesystem::path &unit,
+        const std::filesystem::path &targetPath,
+        const std::vector<std::string> &extraFlags) {
+
+  COBBLER_LOG("Compiling unit: %s", unit.string().c_str());
+  std::vector<std::string> command;
+  command.push_back("c++");
+  command.push_back("-c");
+  command.push_back(unit.string());
+  command.push_back("-o");
+  command.push_back((targetPath / (unit.stem().string() + ".o")).string());
+
+  command.insert(command.end(), extraFlags.begin(), extraFlags.end());
+
+  c.cmd<TYPE>({}, {}, command);
+
+  return (targetPath / unit.stem()).string() + ".o";
+}
+
 template <io TYPE = io::async, typename... S>
 inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
                  const std::filesystem::path &target, const S &...extraFlags) {
   std::vector<std::string> command = {};
   command.push_back("c++");
-
   // ld commands are an absolute assfuck to generate manually so we won't :)
-
   for (const auto &c : objects) {
     COBBLER_LOG("Linking object: %s", c.string().c_str());
     command.push_back(c.string());
@@ -453,6 +502,24 @@ inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
   command.push_back(target.string());
   auto rrg = __internal::splatVariadicToArgVector(extraFlags...);
   command.insert(command.end(), rrg.begin(), rrg.end());
+  c.cmd<TYPE>({}, {}, command);
+}
+
+template <io TYPE = io::async>
+inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
+                 const std::filesystem::path &target,
+                 const std::vector<std::string> &extraFlags) {
+  std::vector<std::string> command = {};
+  command.push_back("c++");
+
+  for (const auto &c : objects) {
+    COBBLER_LOG("Linking object: %s", c.string().c_str());
+    command.push_back(c.string());
+  }
+
+  command.push_back("-o");
+  command.push_back(target.string());
+  command.insert(command.end(), extraFlags.begin(), extraFlags.end());
   c.cmd<TYPE>({}, {}, command);
 }
 
