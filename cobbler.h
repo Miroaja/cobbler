@@ -1,71 +1,103 @@
-#pragma once
+#ifndef COBBLER_H
+#define COBBLER_H
+
 #include <atomic>
 #include <cassert>
+#include <concepts>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
-#include <iostream>
-#include <mutex>
-#include <optional>
+#include <future>
+#include <spawn.h>
 #include <sstream>
 #include <string.h>
 #include <string>
+#include <sys/file.h>
 #include <sys/wait.h>
 #include <thread>
-#include <uchar.h>
 #include <unistd.h>
 #include <vector>
 
-// VERSION : 0.0.4;
-namespace cbl {
-namespace __internal {
-inline std::mutex printMux;
-inline std::atomic_int indentLevel;
-} // namespace __internal
-} // namespace cbl
+// TODO: define global os-switch semantics
 
 #define COBBLER_PUSH_INDENT()                                                  \
-  {                                                                            \
-    std::scoped_lock printLock(cbl::__internal::printMux);                     \
-    cbl::__internal::indentLevel++;                                            \
-  }
+  { cbl::indentLevel++; }
 #define COBBLER_POP_INDENT()                                                   \
-  {                                                                            \
-    std::scoped_lock printLock(cbl::__internal::printMux);                     \
-    cbl::__internal::indentLevel--;                                            \
-  }
+  { cbl::indentLevel--; }
 
 #if !defined(WIN32)
 #define COBBLER_LOG(msg, ...)                                                  \
   {                                                                            \
-    std::scoped_lock printLock(cbl::__internal::printMux);                     \
-    for (int i = 0; i < cbl::__internal::indentLevel; i++) {                   \
-      printf("  ");                                                            \
+    std::scoped_lock printLock(cbl::backend::procMux);                         \
+    for (int i = 0; i < cbl::indentLevel; i++) {                               \
+      printf("==");                                                            \
     }                                                                          \
-    printf("\033[0;34m[INFO] " msg "\033[0m\n", ##__VA_ARGS__);                \
+    if (cbl::indentLevel > 0) {                                                \
+      printf(" ");                                                             \
+    }                                                                          \
+    printf("\033[0;34m[INFO] ====> " msg "\033[0m\n", ##__VA_ARGS__);          \
   }
 #define COBBLER_WARN(msg, ...)                                                 \
   {                                                                            \
-    std::scoped_lock printLock(cbl::__internal::printMux);                     \
-    for (int i = 0; i < cbl::__internal::indentLevel; i++) {                   \
-      printf("  ");                                                            \
+    std::scoped_lock printLock(cbl::backend::procMux);                         \
+    for (int i = 0; i < cbl::indentLevel; i++) {                               \
+      printf("==");                                                            \
     }                                                                          \
-    printf("\033[0;33m[WARNING] " msg "\033[0m\n", ##__VA_ARGS__);             \
+    if (cbl::indentLevel > 0) {                                                \
+      printf(" ");                                                             \
+    }                                                                          \
+    printf("\033[0;33m[WARNING] => " msg "\033[0m\n", ##__VA_ARGS__);          \
   }
 #define COBBLER_ERROR(msg, ...)                                                \
   {                                                                            \
-    std::scoped_lock printLock(cbl::__internal::printMux);                     \
-    for (int i = 0; i < cbl::__internal::indentLevel; i++) {                   \
-      fprintf(stderr, "  ");                                                   \
+    std::scoped_lock printLock(cbl::backend::procMux);                         \
+    for (int i = 0; i < cbl::indentLevel; i++) {                               \
+      fprintf(stderr, "==");                                                   \
     }                                                                          \
-    fprintf(stderr, "\033[0;31m[ERROR] " msg "\033[0m\n", ##__VA_ARGS__);      \
+    if (cbl::indentLevel > 0) {                                                \
+      fprintf(stderr, " ");                                                    \
+    }                                                                          \
+    fprintf(stderr, "\033[0;31m[ERROR] ===> " msg "\033[0m\n", ##__VA_ARGS__); \
   }
 #else
-/// TODO: DO WIN32 HERE!!!
+// TODO: use typical os-switch
 #endif
 
+// VERSION : 0.0.5;
 namespace cbl {
-namespace __internal {
-template <class... S>
+inline std::atomic_int indentLevel = 0;
+namespace backend {
+#ifndef COBBLER_NO_DEFAULT_BACKEND
+class ProcMux {
+public:
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
+// TODO: implement
+#elif __ANDROID__
+// TODO: investigate if any major differences to __unix__, if not merge
+#elif __unix__
+  using native_handle_type = int;
+
+  inline ProcMux() noexcept {
+    char a[] = "/tmp/COBBLER_XXXXXX_LOCK";
+    _handle = mkstemp(a);
+  }
+  inline ProcMux(const ProcMux &) = delete;
+  ~ProcMux() noexcept { close(_handle); }
+
+  inline void lock() { flock(_handle, LOCK_EX); }
+  inline void unlock() { flock(_handle, LOCK_UN); }
+  inline bool try_lock() { return flock(_handle, LOCK_EX) == 0; }
+#else
+#error "Unknown target system, cannot build default backend"
+#endif
+  inline native_handle_type native_handle() { return _handle; }
+
+private:
+  native_handle_type _handle;
+};
+inline ProcMux procMux;
+
+template <std::convertible_to<std::string>... S>
 inline std::string concatenateVariadic(S const &...strings) {
   std::stringstream stream;
   using List = int[];
@@ -73,92 +105,155 @@ inline std::string concatenateVariadic(S const &...strings) {
   const auto &s = stream.str();
   return s.substr(0, s.length() - 1);
 }
-template <class... S>
+template <std::convertible_to<std::string>... S>
 inline std::vector<std::string> splatVariadicToArgVector(S const &...strings) {
   using List = std::vector<std::string>;
   List l{std::string(strings)...};
   return l;
 }
-inline std::vector<const char *>
-toLocalArglist(const std::vector<std::string> &args) {
-  std::vector<const char *> result;
-  for (auto &s : args) {
-    result.push_back(s.c_str());
+template <std::convertible_to<std::string> S>
+inline std::vector<const char *> toLocalArglist(const std::vector<S> &cmd) {
+  std::vector<const char *> result = {};
+  for (int i = 0; i < cmd.size(); i++) {
+    result.push_back(cmd[i].c_str());
   }
   result.push_back(nullptr);
   return result;
 }
-} // namespace __internal
 
-template <typename T> class expected {
-  // TODO: implement
-};
+#ifdef __unix__
+// TODO: Find way to run programs without having to supply a fully qualified
+// name each time
+inline std::tuple<int, pid_t> spawnOnUnix(const std::vector<std::string> &cmd) {
+  pid_t pid;
+  auto args = toLocalArglist(cmd);
+  int status;
 
+  return {posix_spawn(&pid, cmd.front().c_str(), nullptr, nullptr,
+                      const_cast<char *const *>(args.data()), environ),
+          pid};
+}
+
+inline int forkAndRun(const std::vector<std::string> &cmd) {
+  pid_t cPid = fork();
+  if (cPid < 0) { /* ERROR */
+    COBBLER_ERROR("Could not create child!");
+    exit(EXIT_FAILURE);
+  } else if (cPid == 0) { /* CHILD */
+    std::filesystem::path p = cmd.front();
+    auto args = toLocalArglist(cmd);
+
+    execvpe(p.string().c_str(), const_cast<char *const *>(args.data()),
+            environ);
+    auto errorval = errno;
+    COBBLER_ERROR("Excec encountered an error: %s", strerror(errorval));
+    exit(EXIT_FAILURE);
+  }
+  return cPid;
+}
+#endif // __unix__
+
+inline void call(const std::vector<std::string> &cmd) {
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
+// TODO: implement
+#elif __ANDROID__
+// TODO: investigate if any major differences to __unix__, if not merge
+#elif __unix__
+#if 0
+  auto [status, pid] = spawnOnUnix(cmd);
+  if (status == 0) {
+    do {
+      if (waitpid(pid, &status, 0) != -1) {
+      } else {
+        COBBLER_ERROR("Encountered error while waiting for process: %s",
+                      cmd.front().c_str());
+        exit(EXIT_FAILURE);
+      }
+    } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+  } else {
+    COBBLER_ERROR("Failed to start process: %s because %s", cmd.front().c_str(),
+                  strerror(status));
+  }
+#endif
+
+  pid_t cPid = forkAndRun(cmd);
+  int status;
+  waitpid(cPid, &status, 0);
+  if (!(WIFEXITED(status) && WEXITSTATUS(status) == 0)) {
+    auto errorval = errno;
+    COBBLER_ERROR("Command %s encountered an error", cmd.front().c_str());
+  }
+}
+
+#else
+#error "Unknown target system, cannot build default backend"
+#endif
+
+  inline std::future<void> callAsync(const std::vector<std::string> &cmd) {
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
+// TODO: implement
+#elif __ANDROID__
+// TODO: investigate if any major differences to __unix__, if not merge
+#elif __unix__
+  pid_t cPid = forkAndRun(cmd);
+  /* PARENT */
+  std::promise<void> wait_promise;
+  std::future<void> wait_future = wait_promise.get_future();
+  std::thread t(
+      [cPid, cmd](std::promise<void> wp) {
+        int status;
+        waitpid(cPid, &status, 0);
+        if (!(WIFEXITED(status) && WEXITSTATUS(status) == 0)) {
+          auto errorval = errno;
+          COBBLER_ERROR("Command %s encountered an error", cmd.front().c_str());
+        }
+        wp.set_value();
+      },
+      std::move(wait_promise));
+  t.detach();
+  return wait_future;
+#else
+#error "Unknown target system, cannot build default backend"
+#endif
+  }
+#endif
+} // namespace backend
+} // namespace cbl
+
+namespace cbl {
 enum class io : uint8_t { sync = 0, async };
-struct Pipe {
-  inline Pipe() { pipe(_fds); }
-
-  inline std::string get() {
-    char buf;
-    std::string ret = "";
-    while (read(_fds[1], &buf, 1) > 0) {
-      ret.push_back(buf);
-    }
-    return ret;
-  }
-
-private:
-  friend class Cobbler;
-  int _fds[2] = {};
-  void _close() {
-    close(_fds[0]);
-    close(_fds[1]);
-  }
-};
-
-// Commands are pushed into a "Cobbler"
-// Commands can be pushed in any of the following type:
-//
-// S/ynchronous - these commands are executed in order,
-// their output is stored in a pipe if such a pipe is declared at the appension
-// point, which can be accessed by any command in synchronous or asynchronous
-// order.
-//
-// A/synchronous - these commands are forked into a separate thread when their
-// appension point is reached.
 struct Cobbler {
   inline void operator()() {
-    _completedAsyncs = 0;
-    _asyncCounter = 0;
+    std::vector<std::future<void>> unfinished = {};
     for (_Command &c : _commands) {
       COBBLER_LOG("Executing %s command: %s",
                   c.calltype == io::async ? "asynchronous" : "synchronous",
                   c.call.front().c_str());
-      _executeCommand(c);
+      if (c.calltype == io::sync) {
+        backend::call(c.call);
+      } else {
+        unfinished.push_back(backend::callAsync(c.call));
+      }
+    }
+    for (auto &f : unfinished) {
+      f.wait();
     }
     COBBLER_LOG("Waiting for all commands to finish");
-    while (_completedAsyncs != _asyncCounter) { /***/
-    }
   }
 
   inline void clear() { _commands.clear(); }
 
   template <io TYPE = io::sync, typename... S>
-  inline Cobbler &cmd(std::optional<Pipe> in, std::optional<Pipe> out,
-                      S const &...command) {
+  inline Cobbler &cmd(S const &...command) {
     _commands.push_back(
         {.calltype = TYPE,
-         .call = __internal::splatVariadicToArgVector(command...),
-         .outPipe = out,
-         .inPipe = in});
+         .call = backend::splatVariadicToArgVector(command...)});
     return (*this);
   }
 
   template <io TYPE = io::sync>
-  inline Cobbler &cmd(std::optional<Pipe> in, std::optional<Pipe> out,
-                      const std::vector<std::string> &command) {
-    _commands.push_back(
-        {.calltype = TYPE, .call = command, .outPipe = out, .inPipe = in});
+  inline Cobbler &cmd(const std::vector<std::string> &command) {
+    _commands.push_back({.calltype = TYPE, .call = command});
     return (*this);
   }
 
@@ -166,113 +261,11 @@ private:
   struct _Command {
     io calltype;
     std::vector<std::string> call;
-    std::optional<Pipe> outPipe;
-    std::optional<Pipe> inPipe;
   };
-
-  inline void _executeCommand(_Command &c) {
-    pid_t cPid = fork();
-    if (cPid < 0) { /* ERROR */
-      assert("Could not create child!");
-    } else if (cPid == 0) { /* CHILD */
-      if (c.inPipe) {
-        if (dup2(c.inPipe.value()._fds[0], STDIN_FILENO) == -1) {
-          auto errorval = errno;
-          COBBLER_ERROR("Could not link inPipe to stdin: %s",
-                        strerror(errorval));
-          abort();
-        }
-        c.inPipe.value()._close();
-      }
-      if (c.outPipe) {
-        if (dup2(c.outPipe.value()._fds[1], STDOUT_FILENO) == -1) {
-          auto errorval = errno;
-          COBBLER_ERROR("Could not link outPipe to stdout: %s",
-                        strerror(errorval));
-          abort();
-        }
-
-        c.outPipe.value()._close();
-      }
-
-      auto v = __internal::toLocalArglist(c.call);
-      std::filesystem::path p = c.call[0];
-      execvp(p.filename().c_str(), const_cast<char *const *>(v.data()));
-      auto errorval = errno;
-      COBBLER_ERROR("Excec encountered an error: %s", strerror(errorval));
-      exit(EXIT_FAILURE);
-    } else { /* PARENT */
-
-      auto handleError = [cPid]() {
-        std::string option = "";
-        COBBLER_ERROR("Child exited abnormally! [C]ontinue or [e]xit: ");
-      invalidChoice:
-        std::getline(std::cin, option);
-        if (option.empty()) {
-          return;
-        }
-        char8_t choise = std::tolower(option[0]);
-        switch (choise) {
-        case 'e': {
-          COBBLER_ERROR("Child process %i %s", cPid,
-                        "exited abnormally, continuation cancelled!\n")
-          abort();
-        }
-        case 'c': {
-          return;
-        }
-        default: {
-          COBBLER_ERROR("\n[C]ontinue or [e]xit: ");
-          option = "";
-          goto invalidChoice;
-        }
-        }
-      };
-      if (c.calltype == io::sync) {
-        int status;
-        waitpid(cPid, &status, 0);
-        if (!WIFEXITED(status)) {
-          handleError();
-        }
-        if (c.inPipe) {
-          c.inPipe.value()._close();
-        }
-        if (c.outPipe) {
-          if (close(c.outPipe.value()._fds[1]) == -1) {
-            auto errorval = errno;
-            COBBLER_ERROR("Could not close write of outPipe: %s",
-                          strerror(errorval));
-            abort();
-          }
-        }
-      } else {
-        _asyncCounter++;
-        std::thread t([cPid, handleError, &c, this]() {
-          int status;
-          waitpid(cPid, &status, 0);
-          if (!WIFEXITED(status)) {
-            handleError();
-          }
-          if (c.inPipe) {
-            c.inPipe.value()._close();
-          }
-          if (c.outPipe) {
-            if (close(c.outPipe.value()._fds[1]) == -1) {
-              auto errorval = errno;
-              COBBLER_ERROR("Could not close write of outPipe: %s",
-                            strerror(errorval));
-              abort();
-            }
-          }
-          _completedAsyncs++;
-        });
-        t.detach();
-      }
-    }
-  }
 
   std::vector<_Command> _commands;
   std::atomic_int _asyncCounter;
   std::atomic_int _completedAsyncs;
 };
 } // namespace cbl
+#endif // !COBBLER_H

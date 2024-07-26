@@ -1,22 +1,17 @@
 #pragma once
+#include "../cobbler.h"
 #include <algorithm>
-#include <cstdio>
-#include <cstdlib>
-#include <filesystem>
 #include <fstream>
 #include <functional>
-#include <ios>
-#include <tuple>
-#include <uchar.h>
-#include <unistd.h>
+#include <iostream>
+#include <optional>
 #include <variant>
-#include <vector>
 
 namespace cbl {
 namespace util {
 
 template <typename... S> inline void generateClangFile(const S &...flags) {
-  auto args = __internal::splatVariadicToArgVector(flags...);
+  auto args = backend::splatVariadicToArgVector(flags...);
   args.push_back("-c");
 
   std::ofstream clangdFile("./.clangd");
@@ -459,7 +454,7 @@ compile(Cobbler &c, const std::filesystem::path &unit,
         const std::filesystem::path &targetPath, const S &...extraFlags) {
 
   COBBLER_LOG("Compiling unit: %s", unit.string().c_str());
-  c.cmd<TYPE>({}, {}, "c++", "-c", unit.string(), "-o",
+  c.cmd<TYPE>("c++", "-c", unit.string(), "-o",
               (targetPath / (unit.stem().string() + ".o")).string(),
               extraFlags...);
 
@@ -482,7 +477,7 @@ compile(Cobbler &c, const std::filesystem::path &unit,
 
   command.insert(command.end(), extraFlags.begin(), extraFlags.end());
 
-  c.cmd<TYPE>({}, {}, command);
+  c.cmd<TYPE>(command);
 
   return (targetPath / unit.stem()).string() + ".o";
 }
@@ -500,9 +495,9 @@ inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
 
   command.push_back("-o");
   command.push_back(target.string());
-  auto rrg = __internal::splatVariadicToArgVector(extraFlags...);
+  auto rrg = backend::splatVariadicToArgVector(extraFlags...);
   command.insert(command.end(), rrg.begin(), rrg.end());
-  c.cmd<TYPE>({}, {}, command);
+  c.cmd<TYPE>(command);
 }
 
 template <io TYPE = io::async>
@@ -520,13 +515,23 @@ inline void link(Cobbler &c, const std::vector<std::filesystem::path> &objects,
   command.push_back("-o");
   command.push_back(target.string());
   command.insert(command.end(), extraFlags.begin(), extraFlags.end());
-  c.cmd<TYPE>({}, {}, command);
+  c.cmd<TYPE>(command);
 }
 
 inline bool isNewerThan(const std::filesystem::path &a,
                         const std::filesystem::path &b) {
   return std::filesystem::last_write_time(a) >
          std::filesystem::last_write_time(b);
+}
+
+inline void run(std::filesystem::path target, const char **argv) {
+  COBBLER_LOG("Starting program %s", target.c_str());
+  // Evil const dropping cast
+  execvp(target.c_str(), (char *const *)argv);
+
+  auto errorval = errno;
+  COBBLER_ERROR("Exec encountered an error: %s", strerror(errorval));
+  exit(EXIT_FAILURE);
 }
 
 template <typename... S>
@@ -563,7 +568,7 @@ inline void rebuildAndRun(Cobbler &c, std::vector<std::filesystem::path> units,
   COBBLER_PUSH_INDENT();
   util::link<io::sync>(c, objects, target);
   for (const auto &unit : units) {
-    c.cmd({}, {}, "rm", (unit.stem().string() + ".o"));
+    c.cmd("rm", (unit.stem().string() + ".o"));
   }
   c();
   COBBLER_POP_INDENT();
@@ -574,7 +579,7 @@ inline void rebuildAndRun(Cobbler &c, std::vector<std::filesystem::path> units,
   execvp(target.c_str(), (char *const *)argv);
 
   auto errorval = errno;
-  COBBLER_ERROR("Excec encountered an error: %s", strerror(errorval));
+  COBBLER_ERROR("Exec encountered an error: %s", strerror(errorval));
   exit(EXIT_FAILURE);
 }
 

@@ -18,11 +18,11 @@ int main(int argc, const char **argv) {
 
   COBBLER_LOG("Copying headers!");
   COBBLER_PUSH_INDENT();
-  c.cmd({}, {}, "c++", "-fpreprocessed", "-dD", "-E", "-w", "./cobbler.h", "-o",
+  c.cmd("c++", "-fpreprocessed", "-dD", "-E", "-w", "./cobbler.h", "-o",
         "/usr/local/include/cobbler.h");
-  c.cmd({}, {}, "mkdir", "-p", "/usr/local/include/cobbler/");
-  c.cmd({}, {}, "c++", "-fpreprocessed", "-dD", "-E", "-w", "./cobbler/util.h",
-        "-o", "/usr/local/include/cobbler/util.h");
+  c.cmd("mkdir", "-p", "/usr/local/include/cobbler/");
+  c.cmd("c++", "-fpreprocessed", "-dD", "-E", "-w", "./cobbler/util.h", "-o",
+        "/usr/local/include/cobbler/util.h");
   c();
   COBBLER_POP_INDENT();
   COBBLER_LOG("Done!");
